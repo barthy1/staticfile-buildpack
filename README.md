@@ -36,6 +36,25 @@ Official buildpack documentation can be found at http://docs.cloudfoundry.org/bu
   cf push my_app -b custom_node_buildpack
   ```
 
+### Update to ppc64le
+1. Build cloudfoundry/cflinuxfs2 Docker image
+
+   ``` bash
+   git clone https://github.com/cloudfoundry/stacks.git 
+   cd stacks
+   make
+   ```
+
+1. Build nginx blob [using Docker](https://github.com/cloudfoundry/binary-builder#running-within-docker). 
+
+   ``` bash
+   sudo docker run -w /binary-builder -v `pwd`:/binary-builder -it cloudfoundry/cflinuxfs2 ./bin/binary-builder --name=nginx --version=1.11.3 --md5=18275c1daa39c5fac12e56c34907d45b
+   ```
+
+1. Make nginx-1.11.3-linux-x64.tgz blob available to download
+
+1. Update manifest.yml with link to blob and md5
+
 ### Testing
 Buildpacks use the [Machete](https://github.com/cloudfoundry/machete) framework for running integration tests.
 
