@@ -13,14 +13,20 @@ compile_buildpack_dir=$(cd $(dirname $0); cd ..; pwd)
 compile_buildpack_bin=$compile_buildpack_dir/bin
 $compile_buildpack_dir/compile-extensions/bin/check_stack_support
 
+$compile_buildpack_dir/compile-extensions/bin/check_buildpack_version $compile_buildpack_dir $cache_dir
+
 # Load some convenience functions like status(), echo(), and indent()
 source $compile_buildpack_dir/bin/common.sh
 
 BUILDPACK_PATH=$compile_buildpack_dir source $compile_buildpack_dir/compile-extensions/lib/common
 
-translated_url=$($compile_buildpack_dir/compile-extensions/bin/download_dependency nginx.tgz /tmp)
+default_nginx_version="$($compile_buildpack_dir/compile-extensions/bin/default_version_for $compile_buildpack_dir/manifest.yml nginx)"
+echo "Using Nginx version $default_nginx_version"
+
+translated_url=$($compile_buildpack_dir/compile-extensions/bin/download_dependency nginx-$default_nginx_version.tgz /tmp)
 echo "Downloaded [$translated_url]"
-compile_nginx_tgz="/tmp/nginx.tgz"
+
+compile_nginx_tgz="/tmp/nginx-$default_nginx_version.tgz"
 cd $build_dir
 
 # Alternate root location (default is root of project) for html/js/css
@@ -39,16 +45,30 @@ if [[ ! -d ${root_dir} ]] ; then
   error "the application Staticfile specifies a root directory \`${root_dir}\` that is a plain file, but was expected to be a directory"
 fi
 
+if [[ -e "Staticfile" && "$(grep 'host_dot_files: true' Staticfile)X" != "X" ]]; then
+  host_dotfiles=true
+else
+  host_dotfiles=false
+fi
+
 status "Copying project files into public/"
 shopt -s extglob
 root_dir_absolute=`cd $root_dir 2>/dev/null && pwd -P`
 if [ ${build_dir}/public != ${root_dir_absolute} ]; then
   tmp_dir=`mktemp -d /tmp/XXXXX`
-  mv $root_dir_absolute/!(Staticfile|Staticfile.auth|manifest.yml|stackato.yml) $tmp_dir || true
+
+  if [[ "$host_dotfiles" = true ]]; then
+    shopt -s dotglob
+    mv $root_dir_absolute/!(Staticfile|Staticfile.auth|manifest.yml|stackato.yml|.profile|.|..) $tmp_dir || true
+  else
+    mv $root_dir_absolute/!(Staticfile|Staticfile.auth|manifest.yml|stackato.yml) $tmp_dir || true
+  fi
+
   rm -rf $build_dir/public
   mv $tmp_dir  $build_dir/public
 fi
 shopt -u extglob
+shopt -u dotglob
 
 
 
@@ -61,11 +81,20 @@ cp -f $compile_buildpack_dir/conf/mime.types nginx/conf/mime.types
 [[ -f $build_dir/public/mime.types ]] && mv $build_dir/public/mime.types nginx/conf/mime.types
 
 if [[ -f Staticfile.auth ]]; then
-  status "Enabling basic authentication"
+  status "Enabling basic authentication using Staticfile.auth"
   mv Staticfile.auth nginx/conf/.htpasswd
-  cat nginx/conf/.htpasswd | indent
-  echo
-  protip "Learn about basic authentication" "https://github.com/cloudfoundry/staticfile-buildpack#basic-authentication"
+  protip "Learn about basic authentication" "http://docs.cloudfoundry.org/buildpacks/staticfile/index.html#authentication"
+fi
+
+if [[ "$host_dotfiles" = true ]]; then
+  status "Enabling hosting of dotfiles"
+  touch nginx/conf/.enable_dotfiles
+fi
+
+# Nginx location_include
+if [[ -e "Staticfile" && "$(grep 'location_include:' Staticfile)X" != "X" ]]; then
+  location_include=$(grep 'location_include:' Staticfile | sed -e 's/^location_include: *//;s/\s*$//')
+  echo $location_include > nginx/conf/.enable_location_include
 fi
 
 # Enable directory index
@@ -86,4 +115,12 @@ if [[ -e "Staticfile" && "$(grep 'pushstate: enabled' Staticfile)X" != "X" ]]; t
   touch nginx/conf/.enable_pushstate
 fi
 
+# Enable HSTS
+if [[ -e "Staticfile" && "$(grep 'http_strict_transport_security: true' Staticfile)X" != "X" ]]; then
+  status "Enabling HSTS"
+  touch nginx/conf/.enable_hsts
+fi
+
 cp $compile_buildpack_bin/boot.sh .
+
+$compile_buildpack_dir/compile-extensions/bin/store_buildpack_metadata $compile_buildpack_dir $cache_dir
